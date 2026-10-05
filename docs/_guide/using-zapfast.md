@@ -253,7 +253,8 @@ sharing format:
 
 To copy whole messages, choose **Select** from a message's menu (or
 Command-click on macOS, Ctrl-click elsewhere), then select the other messages
-you want. Press `Cmd+C` on macOS or `Ctrl+C` elsewhere. The clipboard includes
+you want. Press `Cmd+C` on macOS or `Ctrl+C` elsewhere, or use **Copy** in the
+bar that replaces the message input. The clipboard includes
 only the selected messages, in chat order, using the same sharing format,
 even if some have scrolled off-screen. Attachments contribute a text label and
 any caption; their files are not copied. Copying keeps the selection open.

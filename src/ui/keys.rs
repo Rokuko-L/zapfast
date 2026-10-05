@@ -465,6 +465,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Dismiss the current action, return from search, or close the chat",
     ),
     ("Ctrl+N", "New chat or message yourself"),
+    ("Ctrl+C", "Copy the selected messages"),
     (
         "Ctrl+V",
         "Paste text, or stage a picture from the clipboard",

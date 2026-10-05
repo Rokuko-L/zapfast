@@ -7096,6 +7096,13 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
                     messages: selected.to_vec(),
                 }));
             }
+            // The shortcut is not discoverable on its own, so what it does is
+            // offered here too.
+            if theme::pill_button(ui, &palette, "Copy", false).clicked()
+                && let Some(text) = selected_text(app)
+            {
+                app.actions.push(Action::CopyText(text));
+            }
         });
     });
 }

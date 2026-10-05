@@ -4452,6 +4452,73 @@ mod tests {
         copied
     }
 
+    /// Where a label was painted, for clicking a button that carries it.
+    fn painted(app: &mut App, ctx: &egui::Context, label: &str) -> egui::Pos2 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{label} is on screen"))
+    }
+
+    /// Clicks at `pos` and returns what reached the clipboard.
+    fn copied_by_click(app: &mut App, ctx: &egui::Context, pos: egui::Pos2) -> Vec<String> {
+        let mut copied = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(pos), primary(pos, true)],
+            vec![primary(pos, false)],
+            Vec::new(),
+        ] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+            copied.extend(
+                output
+                    .platform_output
+                    .commands
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text),
+                        _ => None,
+                    }),
+            );
+        }
+        copied
+    }
+
     /// Exports only selected messages in chat order, including off-screen text.
     #[test]
     fn selected_messages_copy_in_chat_order_including_offscreen_text() {
@@ -4672,6 +4739,20 @@ mod tests {
         assert_eq!(copied.len(), 1, "a hidden composer must not swallow Copy");
         assert!(copied[0].ends_with("message number 1"));
         assert_eq!(app.composer, "unsent draft");
+    }
+
+    /// The selection bar's Copy button does what the shortcut does, so the
+    /// action is offered without knowing Ctrl+C.
+    #[test]
+    fn the_selection_bar_copies_the_selection_with_a_button() {
+        let (mut app, ctx, chat) = sweep_chat(2);
+        app.selection = Some((chat, vec!["m000".into(), "m001".into()]));
+        let copy = painted(&mut app, &ctx, "Copy");
+        let copied = copied_by_click(&mut app, &ctx, copy);
+        assert_eq!(copied.len(), 1, "one clipboard write: {copied:?}");
+        assert!(copied[0].contains("message number 0"), "{}", copied[0]);
+        assert!(copied[0].ends_with("message number 1"), "{}", copied[0]);
+        assert_eq!(selected_ids(&app), ["m000", "m001"], "copy keeps selection");
     }
 
     /// Lets an eased key scroll's animation settle: tests advance time by the
