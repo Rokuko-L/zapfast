@@ -4387,6 +4387,39 @@ mod tests {
     }
 
     #[test]
+    fn keeping_a_crop_stages_the_cropped_picture_and_remembers_its_original() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("crop"));
+        render(&mut app, &ctx);
+        let edit = app.picture_edit.clone().expect("the cropper is open");
+        // A region well inside the picture, so the size proves the crop ran.
+        app.picture_edit = Some(crate::model::PictureEdit {
+            crop: crate::model::PictureCrop {
+                x: 10,
+                y: 20,
+                width: 40,
+                height: 30,
+            },
+            ..edit
+        });
+        app.actions.push(crate::model::Action::ApplyPictureEdit);
+        render(&mut app, &ctx);
+        crate::demo::tour::respond(&mut app);
+        let path = match app.pending.first() {
+            Some(crate::app::Pending::File(path)) => path.clone(),
+            _ => panic!("the crop should leave a file staged"),
+        };
+        assert_eq!(image::image_dimensions(&path).expect("reads"), (40, 30));
+        assert!(
+            app.picture_origins.contains_key(&path),
+            "the original is remembered, so cropping again starts over from it"
+        );
+        assert!(app.picture_edit.is_none(), "keeping the crop closes it");
+    }
+
+    #[test]
     fn every_surface_lays_out() {
         let mut app = app();
         let ctx = egui::Context::default();

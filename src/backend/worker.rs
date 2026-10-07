@@ -5229,21 +5229,8 @@ impl Worker {
                 let commands = self.commands.clone();
                 let dir = self.dirs.media_cache_dir().join("edited");
                 tokio::task::spawn_blocking(move || {
-                    let result = match &source {
-                        crate::model::PictureSource::File(path) => std::fs::read(path)
-                            .map_err(|error| error.to_string())
-                            .and_then(|bytes| super::picture_edit::edit(&bytes, crop, turns)),
-                        crate::model::PictureSource::Pasted(rgba) => {
-                            super::picture_edit::edit_pasted(rgba, width, height, crop, turns)
-                        }
-                    }
-                    .and_then(|picture| {
-                        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-                        let hash = super::sticker_store::content_hash(&picture);
-                        let path = dir.join(format!("{hash}.jpg"));
-                        std::fs::write(&path, picture).map_err(|error| error.to_string())?;
-                        Ok(path)
-                    });
+                    let result =
+                        super::picture_edit::write(&source, width, height, crop, turns, &dir);
                     let _ = commands.send(Command::PictureEdited { index, result });
                 });
             }

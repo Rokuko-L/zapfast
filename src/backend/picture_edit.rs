@@ -1,7 +1,9 @@
 //! Crops and turns a picture on its way out, so an attachment can be trimmed
 //! before it is sent.
 
-use crate::model::PictureCrop;
+use std::path::{Path, PathBuf};
+
+use crate::model::{PictureCrop, PictureSource};
 
 /// Quality of the picture written back. The send path passes a JPEG through
 /// untouched, so this is the only lossy step for one.
@@ -34,6 +36,30 @@ pub fn edit_pasted(
     let picture = image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())
         .ok_or_else(|| "This picture could not be read".to_owned())?;
     turned_and_cropped(picture, crop, turns)
+}
+
+/// Turns and crops a staged picture, writes the result in `dir` beside the
+/// other media, and answers with the file it wrote. The name comes from the
+/// picture's own bytes, so the same crop of the same picture is written once.
+pub fn write(
+    source: &PictureSource,
+    width: u32,
+    height: u32,
+    crop: PictureCrop,
+    turns: u8,
+    dir: &Path,
+) -> Result<PathBuf, String> {
+    let picture = match source {
+        PictureSource::File(path) => std::fs::read(path)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| edit(&bytes, crop, turns)),
+        PictureSource::Pasted(rgba) => edit_pasted(rgba, width, height, crop, turns),
+    }?;
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let name = super::sticker_store::content_hash(&picture);
+    let path = dir.join(format!("{name}.jpg"));
+    std::fs::write(&path, picture).map_err(|error| error.to_string())?;
+    Ok(path)
 }
 
 /// Turns the picture, keeps the region, and writes it out.
@@ -203,5 +229,66 @@ mod tests {
     #[test]
     fn a_pasted_picture_that_is_not_rgba_is_refused() {
         assert!(edit_pasted(&[0, 0, 0], 4, 4, PictureCrop::full(4, 4), 0).is_err());
+    }
+
+    #[test]
+    fn writing_a_crop_puts_it_under_its_own_bytes() {
+        let dir = std::env::temp_dir().join("zapfast-picture-edit-write");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("makes the directory");
+        let source = dir.join("source.png");
+        std::fs::write(&source, png(800, 600)).expect("writes the source");
+        let crop = PictureCrop {
+            x: 100,
+            y: 50,
+            width: 200,
+            height: 120,
+        };
+        let written = write(
+            &PictureSource::File(source.clone()),
+            800,
+            600,
+            crop,
+            0,
+            &dir,
+        )
+        .expect("writes the crop");
+        assert_eq!(
+            written.extension().and_then(|kind| kind.to_str()),
+            Some("jpg")
+        );
+        assert_eq!(
+            decoded(&std::fs::read(&written).expect("reads")).dimensions(),
+            (200, 120)
+        );
+        // The same crop of the same picture lands on the same name, so a
+        // second look at it writes nothing new.
+        let again =
+            write(&PictureSource::File(source), 800, 600, crop, 0, &dir).expect("writes it again");
+        assert_eq!(again, written);
+        // A pasted picture goes the same way, from the pixels it was given.
+        let pasted = std::sync::Arc::new([0u8, 0, 255, 255].repeat(800 * 600));
+        let pasted = write(&PictureSource::Pasted(pasted), 800, 600, crop, 0, &dir)
+            .expect("writes the pasted crop");
+        assert_eq!(
+            decoded(&std::fs::read(&pasted).expect("reads")).dimensions(),
+            (200, 120)
+        );
+        std::fs::remove_dir_all(&dir).expect("cleans up");
+    }
+
+    #[test]
+    fn writing_a_crop_of_a_missing_picture_says_so() {
+        let dir = std::env::temp_dir().join("zapfast-picture-edit-missing");
+        let error = write(
+            &PictureSource::File(dir.join("gone.png")),
+            4,
+            4,
+            PictureCrop::full(4, 4),
+            0,
+            &dir,
+        )
+        .expect_err("refuses");
+        assert!(!error.is_empty());
     }
 }
