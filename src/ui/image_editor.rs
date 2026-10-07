@@ -144,11 +144,29 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         change = Some(Change::Reset);
                     }
                     let right = crate::i18n::gettext(locale, "Turn right");
-                    if theme::pill_button(ui, &palette, &right, false).clicked() {
+                    if theme::icon_button(
+                        ui,
+                        Icon::RotateRight,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &right,
+                    )
+                    .clicked()
+                    {
                         change = Some(Change::Turn { clockwise: true });
                     }
                     let left = crate::i18n::gettext(locale, "Turn left");
-                    if theme::pill_button(ui, &palette, &left, false).clicked() {
+                    if theme::icon_button(
+                        ui,
+                        Icon::RotateLeft,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &left,
+                    )
+                    .clicked()
+                    {
                         change = Some(Change::Turn { clockwise: false });
                     }
                 },
