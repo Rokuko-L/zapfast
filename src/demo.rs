@@ -3019,6 +3019,19 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .push(crate::app::Pending::File("/tmp/notes.pdf".into()));
                 app.composer = "Look at these".into();
             }
+            // Opens the cropper on a sample picture. The demo has no worker
+            // to read a picture's size, so it is read here instead.
+            "crop" => {
+                let (photo, _) = sample_files(app);
+                let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
+                app.pending.push(crate::app::Pending::File(photo.clone()));
+                app.picture_edit = Some(crate::model::PictureEdit::new(
+                    0,
+                    crate::model::PictureSource::File(photo),
+                    width,
+                    height,
+                ));
+            }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
             "label-filter" => {
@@ -5241,6 +5254,7 @@ mod tests {
             "staged",
             "attachment-draft-away",
             "attachment-draft-return",
+            "crop",
             "compose-emoji",
             "voice",
             "voice,voice-menu",

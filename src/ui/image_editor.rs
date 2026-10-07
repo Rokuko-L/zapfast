@@ -64,7 +64,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             let picture =
                 super::video_preview::fitted(vec2(wide as f32, tall as f32), inner);
             let scale = picture.width() / wide.max(1) as f32;
-            paint(ui, &source, pasted.as_ref(), picture);
+            if let Some(id) = texture(ui, &source, pasted.as_ref(), picture.size()) {
+                paint_turned(ui, id, picture, edit.turns);
+            }
             // The region is kept in the picture's pixels, so a drag is turned
             // into pixels before it is applied.
             let moving = ui.interact(
@@ -161,31 +163,65 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     app.actions.extend(actions);
 }
 
-/// Draws the picture being edited, whatever it came from.
-fn paint(
-    ui: &egui::Ui,
+/// The picture's texture, once it is ready to draw.
+fn texture(
+    ui: &mut egui::Ui,
     source: &PictureSource,
     pasted: Option<&egui::TextureHandle>,
-    picture: Rect,
-) {
+    size: Vec2,
+) -> Option<egui::TextureId> {
     match source {
         PictureSource::File(path) => {
-            widgets::file_image(ui, path)
-                .fit_to_exact_size(picture.size())
-                .corner_radius(0.0)
-                .paint_at(ui, picture);
-        }
-        PictureSource::Pasted(_) => {
-            if let Some(handle) = pasted {
-                ui.painter().image(
-                    handle.id(),
-                    picture,
-                    Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+            let image = widgets::file_image(ui, path);
+            match image.load_for_size(ui.ctx(), size) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.id),
+                _ => None,
             }
         }
+        PictureSource::Pasted(_) => pasted.map(egui::TextureHandle::id),
     }
+}
+
+/// Which corner of the texture each corner of the picture takes, turned by
+/// whole quarter turns clockwise. Read as the picture's own corners, going
+/// clockwise from the top left.
+fn turned_corners(turns: u8) -> [Pos2; 4] {
+    let quarter = usize::from(turns % 4);
+    let corners = [
+        Pos2::new(0.0, 0.0),
+        Pos2::new(1.0, 0.0),
+        Pos2::new(1.0, 1.0),
+        Pos2::new(0.0, 1.0),
+    ];
+    [
+        corners[(4 - quarter) % 4],
+        corners[(5 - quarter) % 4],
+        corners[(6 - quarter) % 4],
+        corners[(7 - quarter) % 4],
+    ]
+}
+
+/// Draws the picture into `rect`, turned by whole quarter turns clockwise.
+/// The turn is taken out of the texture's own corners, so the pixels are
+/// never copied and turning a picture costs nothing.
+fn paint_turned(ui: &egui::Ui, texture: egui::TextureId, rect: Rect, turns: u8) {
+    let places = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+    ];
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.texture_id = texture;
+    for (place, uv) in places.into_iter().zip(turned_corners(turns)) {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: place,
+            uv,
+            color: Color32::WHITE,
+        });
+    }
+    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+    ui.painter().add(egui::Shape::mesh(mesh));
 }
 
 /// Where a crop's edges and corners are on screen.
@@ -249,5 +285,41 @@ fn shade_outside(ui: &egui::Ui, palette: theme::Palette, picture: Rect, crop: Re
     for (_, at) in handles(crop) {
         ui.painter()
             .rect_filled(Rect::from_center_size(at, Vec2::splat(HANDLE)), 2.0, Color32::WHITE);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quarter_turn_clockwise_puts_the_top_left_at_the_top_right() {
+        assert_eq!(
+            turned_corners(1),
+            [
+                Pos2::new(0.0, 1.0),
+                Pos2::new(0.0, 0.0),
+                Pos2::new(1.0, 0.0),
+                Pos2::new(1.0, 1.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn turning_takes_whole_quarters_and_comes_back_round() {
+        assert_eq!(
+            turned_corners(0),
+            [
+                Pos2::new(0.0, 0.0),
+                Pos2::new(1.0, 0.0),
+                Pos2::new(1.0, 1.0),
+                Pos2::new(0.0, 1.0),
+            ]
+        );
+        assert_eq!(turned_corners(4), turned_corners(0));
+        assert_eq!(turned_corners(7), turned_corners(3));
+        // Half a turn puts each corner where the one across from it was.
+        assert_eq!(turned_corners(2)[0], Pos2::new(1.0, 1.0));
+        assert_eq!(turned_corners(2)[1], Pos2::new(0.0, 1.0));
     }
 }
