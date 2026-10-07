@@ -520,8 +520,7 @@ pub struct App {
     /// Where the picture being written came from, for when it lands.
     pub picture_applying: Option<crate::model::PictureOrigin>,
     /// Where each cropped staged file came from, by the path it was written to.
-    pub picture_origins:
-        std::collections::HashMap<std::path::PathBuf, crate::model::PictureOrigin>,
+    pub picture_origins: std::collections::HashMap<std::path::PathBuf, crate::model::PictureOrigin>,
     /// A pack shared in a chat, being viewed: the pack and its publisher.
     pub sticker_preview: Option<(StickerPack, String)>,
     /// Whether the viewed pack is still downloading.

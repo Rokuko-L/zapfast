@@ -55,14 +55,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 .rect_filled(rect, 0.0, Color32::from_black_alpha(238));
             let room = rect.shrink(MARGIN);
             let top = Rect::from_min_size(room.min, vec2(room.width(), BAR));
-            let bottom = Rect::from_min_size(
-                pos2(room.min.x, room.max.y - BAR),
-                vec2(room.width(), BAR),
-            );
+            let bottom =
+                Rect::from_min_size(pos2(room.min.x, room.max.y - BAR), vec2(room.width(), BAR));
             let (wide, tall) = edit.displayed_size();
-            let inner = Rect::from_min_max(pos2(room.min.x, top.max.y), pos2(room.max.x, bottom.min.y));
-            let picture =
-                super::video_preview::fitted(vec2(wide as f32, tall as f32), inner);
+            let inner =
+                Rect::from_min_max(pos2(room.min.x, top.max.y), pos2(room.max.x, bottom.min.y));
+            let picture = super::video_preview::fitted(vec2(wide as f32, tall as f32), inner);
             let scale = picture.width() / wide.max(1) as f32;
             if let Some(id) = texture(ui, &source, pasted.as_ref(), picture.size()) {
                 paint_turned(ui, id, picture, edit.turns);
@@ -229,8 +227,10 @@ fn paint_turned(ui: &egui::Ui, texture: egui::TextureId, rect: Rect, turns: u8) 
         rect.right_bottom(),
         rect.left_bottom(),
     ];
-    let mut mesh = egui::epaint::Mesh::default();
-    mesh.texture_id = texture;
+    let mut mesh = egui::epaint::Mesh {
+        texture_id: texture,
+        ..Default::default()
+    };
     for (place, uv) in places.into_iter().zip(turned_corners(turns)) {
         mesh.vertices.push(egui::epaint::Vertex {
             pos: place,
@@ -301,8 +301,11 @@ fn shade_outside(ui: &egui::Ui, palette: theme::Palette, picture: Rect, crop: Re
         StrokeKind::Inside,
     );
     for (_, at) in handles(crop) {
-        ui.painter()
-            .rect_filled(Rect::from_center_size(at, Vec2::splat(HANDLE)), 2.0, Color32::WHITE);
+        ui.painter().rect_filled(
+            Rect::from_center_size(at, Vec2::splat(HANDLE)),
+            2.0,
+            Color32::WHITE,
+        );
     }
 }
 

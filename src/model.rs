@@ -1282,7 +1282,7 @@ impl PictureEdit {
 
     /// The source turned to the side the crop is measured in.
     pub fn displayed_size(&self) -> (u32, u32) {
-        if self.turns % 2 == 0 {
+        if self.turns.is_multiple_of(2) {
             (self.width, self.height)
         } else {
             (self.height, self.width)
@@ -2368,11 +2368,7 @@ mod tests {
         assert_eq!(turned.displayed_size(), (600, 800));
         assert_eq!(turned.crop, PictureCrop::full(600, 800));
         // Four quarter turns come back to where it started.
-        let round = turned
-            .clone()
-            .turned(true)
-            .turned(true)
-            .turned(true);
+        let round = turned.clone().turned(true).turned(true).turned(true);
         assert_eq!(round.turns, 0);
         assert_eq!(round.displayed_size(), (800, 600));
         assert_eq!(round.crop, PictureCrop::full(800, 600));
