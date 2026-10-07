@@ -27,6 +27,8 @@ enum Change {
     Turn { clockwise: bool },
 }
 
+/// Draws the cropper over the whole window and records whatever its controls
+/// asked for. The staged picture is left alone until the crop is kept.
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(mut edit) = app.picture_edit.clone() else {
         return;
