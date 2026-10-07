@@ -1308,11 +1308,13 @@ impl PictureEdit {
         }
     }
 
-    /// The whole picture again, keeping the turn.
+    /// The whole picture again, the way it started: no turn and nothing
+    /// cropped away. This is what the editor's Reset does, so it has to undo
+    /// the turn as well as the region.
     pub fn reset(self) -> Self {
-        let (width, height) = self.displayed_size();
         Self {
-            crop: PictureCrop::full(width, height),
+            crop: PictureCrop::full(self.width, self.height),
+            turns: 0,
             ..self
         }
     }
@@ -2369,12 +2371,13 @@ mod tests {
     }
 
     #[test]
-    fn resetting_a_crop_keeps_the_turn() {
+    fn resetting_puts_the_picture_back_the_way_it_started() {
         let edit = PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600)
             .turned(true)
             .reset();
-        assert_eq!(edit.turns, 1);
-        assert_eq!(edit.crop, PictureCrop::full(600, 800));
+        assert_eq!(edit.turns, 0, "the turn goes back too");
+        assert_eq!(edit.displayed_size(), (800, 600));
+        assert_eq!(edit.crop, PictureCrop::full(800, 600));
     }
 
     use super::*;
