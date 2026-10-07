@@ -4420,6 +4420,56 @@ mod tests {
     }
 
     #[test]
+    fn reopening_a_cropped_pasted_picture_finds_its_pixels_again() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("staged"));
+        render(&mut app, &ctx);
+        let index = app
+            .pending
+            .iter()
+            .position(|item| matches!(item, crate::app::Pending::Picture { .. }))
+            .expect("the demo stages a pasted picture");
+        let (rgba, width, height) = match &app.pending[index] {
+            crate::app::Pending::Picture {
+                width,
+                height,
+                rgba,
+                ..
+            } => (rgba.clone(), *width as u32, *height as u32),
+            _ => unreachable!(),
+        };
+        // What keeping a crop leaves behind: a file in the strip, and the
+        // pixels it came from remembered against it.
+        let cropped = std::path::PathBuf::from("/fixture/edited.jpg");
+        app.pending[index] = crate::app::Pending::File(cropped.clone());
+        app.picture_origins.insert(
+            cropped,
+            crate::model::PictureOrigin {
+                source: crate::model::PictureSource::Pasted(rgba),
+                width,
+                height,
+                crop: crate::model::PictureCrop::full(width, height),
+                turns: 0,
+            },
+        );
+        app.actions.push(crate::model::Action::EditPicture(index));
+        render(&mut app, &ctx);
+        assert!(
+            matches!(
+                app.picture_edit.as_ref().map(|edit| &edit.source),
+                Some(crate::model::PictureSource::Pasted(_))
+            ),
+            "the cropper opened on the pixels it came from"
+        );
+        assert!(
+            app.picture_texture.is_some(),
+            "and found something to draw them with, rather than an empty frame"
+        );
+    }
+
+    #[test]
     fn every_surface_lays_out() {
         let mut app = app();
         let ctx = egui::Context::default();

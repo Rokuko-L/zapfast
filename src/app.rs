@@ -521,6 +521,10 @@ pub struct App {
     pub picture_applying: Option<crate::model::PictureOrigin>,
     /// Where each cropped staged file came from, by the path it was written to.
     pub picture_origins: std::collections::HashMap<std::path::PathBuf, crate::model::PictureOrigin>,
+    /// The pixels of a pasted picture being cropped again, keyed by the buffer
+    /// they came from. Cropping a pasted picture leaves a file where the strip
+    /// had the pixels, so the cropper has to draw from the buffer itself.
+    pub picture_texture: Option<(usize, egui::TextureHandle)>,
     /// A pack shared in a chat, being viewed: the pack and its publisher.
     pub sticker_preview: Option<(StickerPack, String)>,
     /// Whether the viewed pack is still downloading.
@@ -1093,6 +1097,7 @@ impl App {
             picture_edit: None,
             picture_applying: None,
             picture_origins: Default::default(),
+            picture_texture: None,
             scrolling: fastframe_scroll::Scrolling::default(),
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
