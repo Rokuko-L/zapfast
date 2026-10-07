@@ -5206,6 +5206,50 @@ impl Worker {
                     self.emit(Event::Error(format!("Could not make the sticker: {error}")))
                 }
             },
+            Command::InspectPicture { index, path } => {
+                let commands = self.commands.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = std::fs::read(&path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| super::picture_edit::inspect(&bytes));
+                    let _ = commands.send(Command::PictureInspected { index, result });
+                });
+            }
+            Command::PictureInspected { index, result } => {
+                self.emit(Event::PictureInspected { index, result });
+            }
+            Command::ApplyPictureEdit {
+                index,
+                source,
+                width,
+                height,
+                crop,
+                turns,
+            } => {
+                let commands = self.commands.clone();
+                let dir = self.dirs.media_cache_dir().join("edited");
+                tokio::task::spawn_blocking(move || {
+                    let result = match &source {
+                        crate::model::PictureSource::File(path) => std::fs::read(path)
+                            .map_err(|error| error.to_string())
+                            .and_then(|bytes| super::picture_edit::edit(&bytes, crop, turns)),
+                        crate::model::PictureSource::Pasted(rgba) => {
+                            super::picture_edit::edit_pasted(rgba, width, height, crop, turns)
+                        }
+                    }
+                    .and_then(|picture| {
+                        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+                        let hash = super::sticker_store::content_hash(&picture);
+                        let path = dir.join(format!("{hash}.jpg"));
+                        std::fs::write(&path, picture).map_err(|error| error.to_string())?;
+                        Ok(path)
+                    });
+                    let _ = commands.send(Command::PictureEdited { index, result });
+                });
+            }
+            Command::PictureEdited { index, result } => {
+                self.emit(Event::PictureEdited { index, result });
+            }
             Command::PickStickerArchive => {
                 let commands = self.commands.clone();
                 let packs = self.packs_dir();

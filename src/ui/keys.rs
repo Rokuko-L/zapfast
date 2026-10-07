@@ -6,6 +6,10 @@ use crate::app::App;
 use crate::model::{Action, Chat, Dialog, Page, Scroll};
 
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    if app.picture_edit.is_some() {
+        editor_keys(app, ctx);
+        return;
+    }
     if app.image_preview.is_some() {
         preview_keys(app, ctx);
         return;
@@ -350,6 +354,21 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
         input
             .events
             .retain(|event| !crate::image_preview::consumes_key(event));
+    });
+    app.actions.extend(actions);
+}
+
+/// Handles keys while the cropper covers the window: Escape leaves the
+/// staged picture alone, Enter keeps the crop.
+fn editor_keys(app: &mut App, ctx: &egui::Context) {
+    let mut actions = Vec::new();
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(Action::CancelPictureEdit);
+        }
+        if input.consume_key(Modifiers::NONE, Key::Enter) {
+            actions.push(Action::ApplyPictureEdit);
+        }
     });
     app.actions.extend(actions);
 }

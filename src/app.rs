@@ -515,6 +515,8 @@ pub struct App {
     pub sticker_pack_name: String,
     /// The picture being made into a sticker.
     pub sticker_draft: Option<crate::model::StickerDraft>,
+    /// The staged picture being cropped, while the cropper is open.
+    pub picture_edit: Option<crate::model::PictureEdit>,
     /// A pack shared in a chat, being viewed: the pack and its publisher.
     pub sticker_preview: Option<(StickerPack, String)>,
     /// Whether the viewed pack is still downloading.
@@ -1084,6 +1086,7 @@ impl App {
             sticker_preview: None,
             sticker_preview_pending: false,
             sticker_draft: None,
+            picture_edit: None,
             scrolling: fastframe_scroll::Scrolling::default(),
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
@@ -2983,6 +2986,36 @@ impl App {
                     self.dialog = Some(Dialog::StickerMaker);
                 }
             }
+            Event::PictureInspected { index, result } => match result {
+                Ok((width, height)) => {
+                    // The attachment may have been removed while the size was
+                    // being read, so it is looked up again rather than assumed.
+                    let source = self.pending.get(index).and_then(|item| match item {
+                        Pending::File(path) => Some(path.clone()),
+                        Pending::Picture { .. } => None,
+                    });
+                    if let Some(path) = source {
+                        self.picture_edit = Some(crate::model::PictureEdit::new(
+                            index,
+                            crate::model::PictureSource::File(path),
+                            width,
+                            height,
+                        ));
+                    }
+                }
+                Err(error) => self.toast_error(error),
+            },
+            Event::PictureEdited { index, result } => {
+                self.picture_edit = None;
+                match result {
+                    Ok(path) => {
+                        if index < self.pending.len() {
+                            self.pending[index] = Pending::File(path);
+                        }
+                    }
+                    Err(error) => self.toast_error(error),
+                }
+            }
             Event::StickerPackPreview(result) => {
                 self.sticker_preview_pending = false;
                 match result {
@@ -4857,6 +4890,41 @@ impl App {
                     self.pending.remove(index);
                 }
             }
+            Action::EditPicture(index) => match self.pending.get(index) {
+                Some(Pending::Picture {
+                    width,
+                    height,
+                    rgba,
+                    ..
+                }) => {
+                    self.picture_edit = Some(crate::model::PictureEdit::new(
+                        index,
+                        crate::model::PictureSource::Pasted(rgba.clone()),
+                        *width as u32,
+                        *height as u32,
+                    ));
+                }
+                Some(Pending::File(path)) if Pending::is_picture_file(path) => {
+                    self.backend.send(Command::InspectPicture {
+                        index,
+                        path: path.clone(),
+                    });
+                }
+                _ => {}
+            },
+            Action::ApplyPictureEdit => {
+                if let Some(edit) = self.picture_edit.take() {
+                    self.backend.send(Command::ApplyPictureEdit {
+                        index: edit.index,
+                        source: edit.source,
+                        width: edit.width,
+                        height: edit.height,
+                        crop: edit.crop,
+                        turns: edit.turns,
+                    });
+                }
+            }
+            Action::CancelPictureEdit => self.picture_edit = None,
             Action::ClearPending => self.pending.clear(),
             Action::PlayVoice { message, path } => self.play_voice(message, path),
             Action::PlayVideo { message, path } => self.play_video(message, path),
