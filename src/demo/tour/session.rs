@@ -79,6 +79,60 @@ pub fn respond(app: &mut App) {
                     .collect();
                 append(app, row);
             }
+            Command::InspectPicture { index, path } => {
+                let size = std::fs::read(&path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| crate::backend::picture_edit::inspect(&bytes));
+                match size {
+                    Ok((width, height)) => {
+                        app.picture_edit = Some(crate::model::PictureEdit::new(
+                            index,
+                            crate::model::PictureSource::File(path),
+                            width,
+                            height,
+                        ));
+                    }
+                    Err(error) => app.toast_error(error),
+                }
+            }
+            Command::ApplyPictureEdit {
+                index,
+                source,
+                width,
+                height,
+                crop,
+                turns,
+            } => {
+                let edited = match &source {
+                    crate::model::PictureSource::File(path) => std::fs::read(path)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| crate::backend::picture_edit::edit(&bytes, crop, turns)),
+                    crate::model::PictureSource::Pasted(rgba) => {
+                        crate::backend::picture_edit::edit_pasted(rgba, width, height, crop, turns)
+                    }
+                };
+                let written = edited.and_then(|bytes| {
+                    let path = app
+                        .dirs
+                        .media_cache_dir()
+                        .join("edited")
+                        .join(format!("{}.jpg", crate::backend::sticker_store::content_hash(&bytes)));
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                    }
+                    std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
+                    Ok(path)
+                });
+                match written {
+                    Ok(path) => {
+                        if index < app.pending.len() {
+                            app.pending[index] = crate::app::Pending::File(path);
+                        }
+                    }
+                    Err(error) => app.toast_error(error),
+                }
+                app.picture_edit = None;
+            }
             Command::SendSticker {
                 chat,
                 path,
