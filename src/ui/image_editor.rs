@@ -36,13 +36,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     // Captured before the edit is borrowed mutably, so the closure does not
     // need the whole app.
     let source = edit.source.clone();
-    let pasted = match app.pending.get(edit.index) {
-        Some(Pending::Picture {
-            texture: Some(handle),
-            ..
-        }) => Some(handle.clone()),
-        _ => None,
-    };
+    let pasted = pasted_texture(app, ctx, &edit);
     let screen = ctx.content_rect();
     let mut actions = Vec::new();
     let mut change = None;
@@ -177,6 +171,61 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
     app.picture_edit = Some(edit);
     app.actions.extend(actions);
+}
+
+/// The texture to draw a pasted picture with, built from its buffer when the
+/// strip no longer has it. Cropping a pasted picture leaves a file on disk and
+/// takes the strip's copy of the pixels with it, so on the second visit the
+/// pixels have to come from the buffer the crop was taken from.
+fn pasted_texture(
+    app: &mut App,
+    ctx: &egui::Context,
+    edit: &crate::model::PictureEdit,
+) -> Option<egui::TextureHandle> {
+    if let Some(Pending::Picture {
+        texture: Some(handle),
+        ..
+    }) = app.pending.get(edit.index)
+    {
+        return Some(handle.clone());
+    }
+    let PictureSource::Pasted(rgba) = &edit.source else {
+        return None;
+    };
+    let key = std::sync::Arc::as_ptr(rgba) as usize;
+    if let Some((cached, handle)) = &app.picture_texture
+        && *cached == key
+    {
+        return Some(handle.clone());
+    }
+    let image = pasted_image(rgba, edit.width, edit.height)?;
+    let handle = ctx.load_texture(
+        format!("edited-picture-{key}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
+    app.picture_texture = Some((key, handle.clone()));
+    Some(handle)
+}
+
+/// A pasted buffer as an image to upload, capped the way the strip caps its own
+/// copy so a large paste does not meet the GPU's texture limit here.
+fn pasted_image(rgba: &[u8], width: u32, height: u32) -> Option<egui::ColorImage> {
+    let full = image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())?;
+    let small = if width > 1024 || height > 1024 {
+        let scale = 1024.0 / width.max(height) as f32;
+        let (wide, tall) = (
+            ((width as f32 * scale) as u32).max(1),
+            ((height as f32 * scale) as u32).max(1),
+        );
+        image::imageops::resize(&full, wide, tall, image::imageops::FilterType::Triangle)
+    } else {
+        full
+    };
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [small.width() as usize, small.height() as usize],
+        &small,
+    ))
 }
 
 /// The picture's texture, once it is ready to draw.
