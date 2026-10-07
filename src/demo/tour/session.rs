@@ -112,11 +112,10 @@ pub fn respond(app: &mut App) {
                     }
                 };
                 let written = edited.and_then(|bytes| {
-                    let path = app
-                        .dirs
-                        .media_cache_dir()
-                        .join("edited")
-                        .join(format!("{}.jpg", crate::backend::sticker_store::content_hash(&bytes)));
+                    let path = app.dirs.media_cache_dir().join("edited").join(format!(
+                        "{}.jpg",
+                        crate::backend::sticker_store::content_hash(&bytes)
+                    ));
                     if let Some(parent) = path.parent() {
                         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
                     }

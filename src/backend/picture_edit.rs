@@ -71,12 +71,7 @@ fn encode(picture: &image::RgbaImage) -> Result<Vec<u8>, String> {
     }
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, QUALITY)
-        .write_image(
-            flat.as_raw(),
-            width,
-            height,
-            image::ExtendedColorType::Rgb8,
-        )
+        .write_image(flat.as_raw(), width, height, image::ExtendedColorType::Rgb8)
         .map_err(|error| format!("Could not write the picture: {error}"))?;
     Ok(bytes)
 }
@@ -193,10 +188,9 @@ mod tests {
     fn a_pasted_picture_is_turned_and_cropped_like_a_file() {
         // The same red corner as the encoded fixture, as straight RGBA.
         let (width, height) = (4u32, 2u32);
-        let mut rgba = vec![0u8, 0, 255, 255].repeat((width * height) as usize);
+        let mut rgba = [0u8, 0, 255, 255].repeat((width * height) as usize);
         rgba[..4].copy_from_slice(&[255, 0, 0, 255]);
-        let bytes =
-            edit_pasted(&rgba, width, height, PictureCrop::full(2, 4), 1).expect("edits");
+        let bytes = edit_pasted(&rgba, width, height, PictureCrop::full(2, 4), 1).expect("edits");
         let picture = decoded(&bytes);
         assert_eq!(picture.dimensions(), (2, 4));
         let top_right = picture.get_pixel(1, 0);
