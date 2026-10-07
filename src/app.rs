@@ -517,6 +517,11 @@ pub struct App {
     pub sticker_draft: Option<crate::model::StickerDraft>,
     /// The staged picture being cropped, while the cropper is open.
     pub picture_edit: Option<crate::model::PictureEdit>,
+    /// Where the picture being written came from, for when it lands.
+    pub picture_applying: Option<crate::model::PictureOrigin>,
+    /// Where each cropped staged file came from, by the path it was written to.
+    pub picture_origins:
+        std::collections::HashMap<std::path::PathBuf, crate::model::PictureOrigin>,
     /// A pack shared in a chat, being viewed: the pack and its publisher.
     pub sticker_preview: Option<(StickerPack, String)>,
     /// Whether the viewed pack is still downloading.
@@ -1087,6 +1092,8 @@ impl App {
             sticker_preview_pending: false,
             sticker_draft: None,
             picture_edit: None,
+            picture_applying: None,
+            picture_origins: Default::default(),
             scrolling: fastframe_scroll::Scrolling::default(),
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
@@ -3010,10 +3017,16 @@ impl App {
                 match result {
                     Ok(path) => {
                         if index < self.pending.len() {
-                            self.pending[index] = Pending::File(path);
+                            self.pending[index] = Pending::File(path.clone());
+                        }
+                        if let Some(origin) = self.picture_applying.take() {
+                            self.picture_origins.insert(path, origin);
                         }
                     }
-                    Err(error) => self.toast_error(error),
+                    Err(error) => {
+                        self.picture_applying = None;
+                        self.toast_error(error);
+                    }
                 }
             }
             Event::StickerPackPreview(result) => {
@@ -4904,16 +4917,40 @@ impl App {
                         *height as u32,
                     ));
                 }
-                Some(Pending::File(path)) if Pending::is_picture_file(path) => {
-                    self.backend.send(Command::InspectPicture {
-                        index,
-                        path: path.clone(),
-                    });
+                Some(Pending::File(path)) => {
+                    // A picture that was cropped before opens on the original
+                    // with the crop it had, so cropping it again does not
+                    // stack another lossy pass on the one before it.
+                    let origin = self.picture_origins.get(path).cloned();
+                    if let Some(origin) = origin {
+                        self.picture_edit = Some(crate::model::PictureEdit {
+                            index,
+                            source: origin.source,
+                            width: origin.width,
+                            height: origin.height,
+                            crop: origin.crop,
+                            turns: origin.turns,
+                        });
+                    } else if Pending::is_picture_file(path) {
+                        self.backend.send(Command::InspectPicture {
+                            index,
+                            path: path.clone(),
+                        });
+                    }
                 }
-                _ => {}
+                None => {}
             },
             Action::ApplyPictureEdit => {
                 if let Some(edit) = self.picture_edit.take() {
+                    // Held until the file lands, so it can be filed under the
+                    // path the cropped picture is written to.
+                    self.picture_applying = Some(crate::model::PictureOrigin {
+                        source: edit.source.clone(),
+                        width: edit.width,
+                        height: edit.height,
+                        crop: edit.crop,
+                        turns: edit.turns,
+                    });
                     self.backend.send(Command::ApplyPictureEdit {
                         index: edit.index,
                         source: edit.source,

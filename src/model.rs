@@ -1320,6 +1320,18 @@ impl PictureEdit {
     }
 }
 
+/// Where a staged picture came from before it was cropped. Keeping it means
+/// cropping the same picture again opens on the original with its crop, so a
+/// second pass does not stack another lossy generation on the first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureOrigin {
+    pub source: PictureSource,
+    pub width: u32,
+    pub height: u32,
+    pub crop: PictureCrop,
+    pub turns: u8,
+}
+
 /// A picture on its way to becoming a sticker.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StickerDraft {

@@ -126,10 +126,16 @@ pub fn respond(app: &mut App) {
                 match written {
                     Ok(path) => {
                         if index < app.pending.len() {
-                            app.pending[index] = crate::app::Pending::File(path);
+                            app.pending[index] = crate::app::Pending::File(path.clone());
+                        }
+                        if let Some(origin) = app.picture_applying.take() {
+                            app.picture_origins.insert(path, origin);
                         }
                     }
-                    Err(error) => app.toast_error(error),
+                    Err(error) => {
+                        app.picture_applying = None;
+                        app.toast_error(error);
+                    }
                 }
                 app.picture_edit = None;
             }
