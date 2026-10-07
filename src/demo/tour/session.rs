@@ -103,25 +103,15 @@ pub fn respond(app: &mut App) {
                 crop,
                 turns,
             } => {
-                let edited = match &source {
-                    crate::model::PictureSource::File(path) => std::fs::read(path)
-                        .map_err(|error| error.to_string())
-                        .and_then(|bytes| crate::backend::picture_edit::edit(&bytes, crop, turns)),
-                    crate::model::PictureSource::Pasted(rgba) => {
-                        crate::backend::picture_edit::edit_pasted(rgba, width, height, crop, turns)
-                    }
-                };
-                let written = edited.and_then(|bytes| {
-                    let path = app.dirs.media_cache_dir().join("edited").join(format!(
-                        "{}.jpg",
-                        crate::backend::sticker_store::content_hash(&bytes)
-                    ));
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-                    }
-                    std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
-                    Ok(path)
-                });
+                // The same work the worker would do, on this thread instead.
+                let written = crate::backend::picture_edit::write(
+                    &source,
+                    width,
+                    height,
+                    crop,
+                    turns,
+                    &app.dirs.media_cache_dir().join("edited"),
+                );
                 match written {
                     Ok(path) => {
                         if index < app.pending.len() {
