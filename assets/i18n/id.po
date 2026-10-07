@@ -1529,23 +1529,23 @@ msgstr "Bisukan penelepon tidak dikenal"
 
 #: src/ui/image_editor.rs:107
 msgid "Cancel (Esc)"
-msgstr ""
+msgstr "Batal (Esc)"
 
 #: src/ui/image_editor.rs:120
 msgid "Keep this crop"
-msgstr ""
+msgstr "Simpan potongan ini"
 
 #: src/ui/image_editor.rs:140
 msgid "Reset"
-msgstr ""
+msgstr "Setel ulang"
 
 #: src/ui/image_editor.rs:144
 msgid "Turn right"
-msgstr ""
+msgstr "Putar ke kanan"
 
 #: src/ui/image_editor.rs:157
 msgid "Turn left"
-msgstr ""
+msgstr "Putar ke kiri"
 
 #: src/ui/image_preview.rs:174
 msgid "Save as…"
