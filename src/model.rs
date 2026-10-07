@@ -1111,18 +1111,22 @@ pub enum CropEdge {
 }
 
 impl CropEdge {
+    /// Whether this part drags the region's left side.
     fn moves_left(self) -> bool {
         matches!(self, Self::Left | Self::TopLeft | Self::BottomLeft)
     }
 
+    /// Whether this part drags the region's right side.
     fn moves_right(self) -> bool {
         matches!(self, Self::Right | Self::TopRight | Self::BottomRight)
     }
 
+    /// Whether this part drags the region's top side.
     fn moves_top(self) -> bool {
         matches!(self, Self::Top | Self::TopLeft | Self::TopRight)
     }
 
+    /// Whether this part drags the region's bottom side.
     fn moves_bottom(self) -> bool {
         matches!(self, Self::Bottom | Self::BottomLeft | Self::BottomRight)
     }
