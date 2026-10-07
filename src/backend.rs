@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use crate::model::{Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack};
 use crate::paths::AccountDirs;
 
-mod picture_edit;
+pub(crate) mod picture_edit;
 
 // Re-exported so the picker can detect pasted Signal pack links.
 mod read_sync;

@@ -412,6 +412,9 @@ fn sample_files(app: &App) -> (std::path::PathBuf, std::path::PathBuf) {
 /// Loads the sample account and opens its first chat.
 pub fn populate(app: &mut App) {
     app.backend.set_offline(true);
+    // With no backend to answer them, the interface's commands are answered
+    // here instead.
+    app.backend.record_demo_commands();
     // Demo mode has no backend to handle downloads.
     app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
