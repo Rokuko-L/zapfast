@@ -2701,9 +2701,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "crop" => {
                 let (photo, _) = sample_files(app);
                 let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
+                // Another page may have staged pictures already, so the photo
+                // goes where it lands rather than at the front.
+                let index = app.pending.len();
                 app.pending.push(crate::app::Pending::File(photo.clone()));
                 app.picture_edit = Some(crate::model::PictureEdit::new(
-                    0,
+                    index,
                     crate::model::PictureSource::File(photo),
                     width,
                     height,
@@ -4466,6 +4469,25 @@ mod tests {
         assert!(
             app.picture_texture.is_some(),
             "and found something to draw them with, rather than an empty frame"
+        );
+    }
+
+    #[test]
+    fn the_crop_page_opens_on_the_photo_it_stages() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        // Both pages at once: staged fills the strip before crop adds its own.
+        apply_flags(&mut app, Some("staged,crop"));
+        render(&mut app, &ctx);
+        let edit = app.picture_edit.as_ref().expect("the cropper is open");
+        let staged = match app.pending.get(edit.index) {
+            Some(crate::app::Pending::File(path)) => path.clone(),
+            _ => panic!("the cropper points at the file it staged"),
+        };
+        assert!(
+            matches!(&edit.source, crate::model::PictureSource::File(path) if *path == staged),
+            "the editor and the staged attachment are the same picture"
         );
     }
 
