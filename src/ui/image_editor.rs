@@ -184,10 +184,11 @@ fn pasted_texture(
     ctx: &egui::Context,
     edit: &crate::model::PictureEdit,
 ) -> Option<egui::TextureHandle> {
-    if let Some(Pending::Picture {
-        texture: Some(handle),
-        ..
-    }) = app.pending.get(edit.index)
+    if let Some(at) = app.staged_at(edit.target)
+        && let Some(Pending::Picture {
+            texture: Some(handle),
+            ..
+        }) = app.pending.get(at).map(|staged| &staged.item)
     {
         return Some(handle.clone());
     }

@@ -79,14 +79,14 @@ pub fn respond(app: &mut App) {
                     .collect();
                 append(app, row);
             }
-            Command::InspectPicture { index, path } => {
+            Command::InspectPicture { target, path } => {
                 let size = std::fs::read(&path)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| crate::backend::picture_edit::inspect(&bytes));
                 match size {
                     Ok((width, height)) => {
                         app.picture_edit = Some(crate::model::PictureEdit::new(
-                            index,
+                            target,
                             crate::model::PictureSource::File(path),
                             width,
                             height,
@@ -96,7 +96,7 @@ pub fn respond(app: &mut App) {
                 }
             }
             Command::ApplyPictureEdit {
-                index,
+                target,
                 source,
                 width,
                 height,
@@ -113,16 +113,20 @@ pub fn respond(app: &mut App) {
                     &app.dirs.media_cache_dir().join("edited"),
                 );
                 match written {
+                    // Applied the same way the app applies it: only while that
+                    // attachment is still staged.
                     Ok(path) => {
-                        if index < app.pending.len() {
-                            app.pending[index] = crate::app::Pending::File(path.clone());
-                        }
-                        if let Some(origin) = app.picture_applying.take() {
-                            app.picture_origins.insert(path, origin);
+                        if let Some(at) = app.staged_at(target) {
+                            app.pending[at].item = crate::app::Pending::File(path);
+                            if let Some(origin) = app.picture_applying.remove(&target) {
+                                app.picture_origins.insert(target, origin);
+                            }
+                        } else {
+                            app.picture_applying.remove(&target);
                         }
                     }
                     Err(error) => {
-                        app.picture_applying = None;
+                        app.picture_applying.remove(&target);
                         app.toast_error(error);
                     }
                 }
