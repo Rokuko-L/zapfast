@@ -519,6 +519,11 @@ pub struct App {
     pub sticker_draft: Option<crate::model::StickerDraft>,
     /// The staged picture being cropped, while the cropper is open.
     pub picture_edit: Option<crate::model::PictureEdit>,
+    /// The staged picture whose size was asked for, and whose cropper that
+    /// answer may still open. A size that arrives for anything else has been
+    /// overtaken by a cancellation or by another picture, and opening the
+    /// cropper on it would take the window off whoever has it now.
+    pub picture_inspecting: Option<AttachmentId>,
     /// Where the picture being written came from, by the attachment it will
     /// replace, so two edits in flight cannot swap their origins.
     pub picture_applying: std::collections::HashMap<AttachmentId, crate::model::PictureOrigin>,
@@ -1140,6 +1145,7 @@ impl App {
             sticker_preview_pending: false,
             sticker_draft: None,
             picture_edit: None,
+            picture_inspecting: None,
             picture_applying: Default::default(),
             picture_origins: Default::default(),
             picture_texture: None,
@@ -3045,29 +3051,41 @@ impl App {
                     self.dialog = Some(Dialog::StickerMaker);
                 }
             }
-            Event::PictureInspected { target, result } => match result {
-                Ok((width, height)) => {
-                    // The attachment may have been removed while its size was
-                    // being read, so it is found by name rather than by place.
-                    let source =
-                        self.staged_at(target)
-                            .and_then(|at| match &self.pending[at].item {
-                                Pending::File(path) => Some(path.clone()),
-                                Pending::Picture { .. } => None,
+            Event::PictureInspected { target, result } => {
+                // Only the picture still being waited for may open the cropper.
+                // Anything else was cancelled or overtaken while its size was
+                // being read, and opening on it would take the window off
+                // whoever has it now.
+                if self.picture_inspecting == Some(target) {
+                    self.picture_inspecting = None;
+                    match result {
+                        Ok((width, height)) => {
+                            // The attachment may have been removed while its
+                            // size was being read, so it is found by name
+                            // rather than by place.
+                            let source = self.staged_at(target).and_then(|at| {
+                                match &self.pending[at].item {
+                                    Pending::File(path) => Some(path.clone()),
+                                    Pending::Picture { .. } => None,
+                                }
                             });
-                    if let Some(path) = source {
-                        self.picture_edit = Some(crate::model::PictureEdit::new(
-                            target,
-                            crate::model::PictureSource::File(path),
-                            width,
-                            height,
-                        ));
+                            if let Some(path) = source {
+                                self.picture_edit = Some(crate::model::PictureEdit::new(
+                                    target,
+                                    crate::model::PictureSource::File(path),
+                                    width,
+                                    height,
+                                ));
+                            }
+                        }
+                        Err(error) => self.toast_error(error),
                     }
                 }
-                Err(error) => self.toast_error(error),
-            },
+            }
             Event::PictureEdited { target, result } => {
-                self.picture_edit = None;
+                // The window is left alone: applying a crop takes the editor
+                // with it, so an editor open here belongs to another picture
+                // and closing it would throw away a crop nobody finished.
                 match result {
                     // Applied only while that attachment is still staged. A
                     // result that arrives after its attachment was removed, or
@@ -4970,6 +4988,8 @@ impl App {
                 }
             }
             Action::EditPicture(target) => {
+                // Whatever was being waited for is not what is wanted now.
+                self.picture_inspecting = None;
                 // Read out before anything is written back, so the borrow of
                 // the strip ends here.
                 let pasted = match self.staged_at(target) {
@@ -5012,6 +5032,9 @@ impl App {
                             turns: origin.turns,
                         });
                     } else if Pending::is_picture_file(&path) {
+                        // Its size has to be read before the cropper can open
+                        // on it, and only this answer may open it.
+                        self.picture_inspecting = Some(target);
                         self.backend.send(Command::InspectPicture { target, path });
                     }
                 }
@@ -5040,7 +5063,10 @@ impl App {
                     });
                 }
             }
-            Action::CancelPictureEdit => self.picture_edit = None,
+            Action::CancelPictureEdit => {
+                self.picture_edit = None;
+                self.picture_inspecting = None;
+            }
             Action::ClearPending => {
                 self.pending.clear();
                 self.forget_unstaged_pictures();
@@ -10894,6 +10920,77 @@ mod tests {
         assert!(
             !app.picture_origins.contains_key(&target),
             "and nothing was remembered about it"
+        );
+    }
+
+    #[test]
+    fn a_crop_that_lands_closes_only_the_editor_it_opened() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let first = app.stage(Pending::File("/fixture/one.png".into()));
+        let second = app.stage(Pending::File("/fixture/two.png".into()));
+        // The first crop has been applied, so its editor is already gone, and
+        // the second picture has been opened while its file is written.
+        let open = crate::model::PictureEdit::new(
+            second,
+            crate::model::PictureSource::File("/fixture/two.png".into()),
+            12,
+            6,
+        );
+        app.picture_edit = Some(open.clone());
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target: first,
+                result: Ok(std::path::PathBuf::from("/fixture/edited.jpg")),
+            },
+            true,
+        );
+        assert_eq!(
+            app.picture_edit,
+            Some(open),
+            "the crop that landed threw away the editor the user was in"
+        );
+        let staged = app.pending.first().expect("the first is still staged");
+        assert!(
+            matches!(
+                &staged.item,
+                Pending::File(path) if path == std::path::Path::new("/fixture/edited.jpg")
+            ),
+            "and the first picture was still replaced by its own crop"
+        );
+    }
+
+    #[test]
+    fn a_size_only_opens_the_cropper_while_it_is_still_being_waited_for() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let target = app.stage(Pending::File("/fixture/photo.png".into()));
+        // Waited for, so the answer opens the cropper.
+        app.picture_inspecting = Some(target);
+        app.apply_backend_event(
+            Event::PictureInspected {
+                target,
+                result: Ok((8, 6)),
+            },
+            true,
+        );
+        assert!(
+            app.picture_edit.is_some(),
+            "the size that was asked for opened the cropper"
+        );
+        // Cancelled, so a later answer for anything else opens nothing.
+        app.picture_edit = None;
+        app.picture_inspecting = None;
+        app.apply_backend_event(
+            Event::PictureInspected {
+                target,
+                result: Ok((8, 6)),
+            },
+            true,
+        );
+        assert!(
+            app.picture_edit.is_none(),
+            "a size that was no longer wanted reopened the cropper"
         );
     }
 
