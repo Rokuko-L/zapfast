@@ -464,7 +464,9 @@ pub struct App {
     /// Emoji-grid header to scroll into view.
     pub emoji_jump: Option<&'static str>,
     /// Attachments pending in the composer.
-    pub pending: Vec<Pending>,
+    pub pending: Vec<Staged>,
+    /// The next identity to give a staged attachment.
+    next_pending_id: AttachmentId,
     /// Whether the composer plus menu is open or closing.
     pub composer_tools_open: bool,
     /// In-chat audio player.
@@ -517,10 +519,13 @@ pub struct App {
     pub sticker_draft: Option<crate::model::StickerDraft>,
     /// The staged picture being cropped, while the cropper is open.
     pub picture_edit: Option<crate::model::PictureEdit>,
-    /// Where the picture being written came from, for when it lands.
-    pub picture_applying: Option<crate::model::PictureOrigin>,
-    /// Where each cropped staged file came from, by the path it was written to.
-    pub picture_origins: std::collections::HashMap<std::path::PathBuf, crate::model::PictureOrigin>,
+    /// Where the picture being written came from, by the attachment it will
+    /// replace, so two edits in flight cannot swap their origins.
+    pub picture_applying: std::collections::HashMap<AttachmentId, crate::model::PictureOrigin>,
+    /// Where each cropped staged picture came from, by the attachment it
+    /// replaced. Cropping it again starts from that original, and two pictures
+    /// that happen to be written to the same file keep their own answer.
+    pub picture_origins: std::collections::HashMap<AttachmentId, crate::model::PictureOrigin>,
     /// The pixels of a pasted picture being cropped again, keyed by the buffer
     /// they came from. Cropping a pasted picture leaves a file where the strip
     /// had the pixels, so the cropper has to draw from the buffer itself.
@@ -692,6 +697,45 @@ pub enum Pending {
         texture: Option<egui::TextureHandle>,
     },
     File(PathBuf),
+}
+
+/// What names a staged attachment. It is handed out when the attachment is
+/// staged and never changes afterwards, so work that finishes later can say
+/// which attachment it belongs to instead of which place in the strip it sat
+/// in when the work started.
+pub type AttachmentId = u64;
+
+/// One attachment in the strip, with the identity it keeps while it is staged.
+pub struct Staged {
+    pub id: AttachmentId,
+    pub item: Pending,
+}
+
+impl App {
+    /// Stages an attachment and answers with the identity the backend names
+    /// when it is done with it.
+    pub fn stage(&mut self, item: Pending) -> AttachmentId {
+        let id = self.next_pending_id;
+        self.next_pending_id += 1;
+        self.pending.push(Staged { id, item });
+        id
+    }
+
+    /// Where a staged attachment sits now, if it is still staged at all. Where
+    /// it sits moves when another attachment is removed, so nothing holds on to
+    /// the answer.
+    pub fn staged_at(&self, id: AttachmentId) -> Option<usize> {
+        self.pending.iter().position(|staged| staged.id == id)
+    }
+
+    /// Forgets what was remembered about attachments that are no longer staged,
+    /// so neither map keeps an entry for every picture ever cropped, and a
+    /// removed picture's original does not outlive it.
+    pub fn forget_unstaged_pictures(&mut self) {
+        let live: Vec<AttachmentId> = self.pending.iter().map(|staged| staged.id).collect();
+        self.picture_origins.retain(|id, _| live.contains(id));
+        self.picture_applying.retain(|id, _| live.contains(id));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1067,6 +1111,7 @@ impl App {
             open_header_menu: None,
             emoji_jump: None,
             pending: Vec::new(),
+            next_pending_id: 0,
             composer_tools_open: false,
             player: Player::new(waker.clone()),
             video: crate::video::Player::new(waker.clone()),
@@ -1095,7 +1140,7 @@ impl App {
             sticker_preview_pending: false,
             sticker_draft: None,
             picture_edit: None,
-            picture_applying: None,
+            picture_applying: Default::default(),
             picture_origins: Default::default(),
             picture_texture: None,
             scrolling: fastframe_scroll::Scrolling::default(),
@@ -1237,6 +1282,7 @@ impl App {
         }
         self.picker = None;
         self.pending.clear();
+        self.forget_unstaged_pictures();
         self.reply_to = None;
         self.editing = None;
         self.recording = None;
@@ -1306,6 +1352,7 @@ impl App {
         self.reaction_anchor = None;
         self.picker = None;
         self.pending.clear();
+        self.forget_unstaged_pictures();
         self.invite = None;
         self.message_receipts = None;
         self.receipts_watch = None;
@@ -1822,6 +1869,7 @@ impl App {
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
+            self.forget_unstaged_pictures();
             self.reply_to = None;
             self.editing = None;
             self.picker = None;
@@ -2997,17 +3045,19 @@ impl App {
                     self.dialog = Some(Dialog::StickerMaker);
                 }
             }
-            Event::PictureInspected { index, result } => match result {
+            Event::PictureInspected { target, result } => match result {
                 Ok((width, height)) => {
-                    // The attachment may have been removed while the size was
-                    // being read, so it is looked up again rather than assumed.
-                    let source = self.pending.get(index).and_then(|item| match item {
-                        Pending::File(path) => Some(path.clone()),
-                        Pending::Picture { .. } => None,
-                    });
+                    // The attachment may have been removed while its size was
+                    // being read, so it is found by name rather than by place.
+                    let source =
+                        self.staged_at(target)
+                            .and_then(|at| match &self.pending[at].item {
+                                Pending::File(path) => Some(path.clone()),
+                                Pending::Picture { .. } => None,
+                            });
                     if let Some(path) = source {
                         self.picture_edit = Some(crate::model::PictureEdit::new(
-                            index,
+                            target,
                             crate::model::PictureSource::File(path),
                             width,
                             height,
@@ -3016,19 +3066,26 @@ impl App {
                 }
                 Err(error) => self.toast_error(error),
             },
-            Event::PictureEdited { index, result } => {
+            Event::PictureEdited { target, result } => {
                 self.picture_edit = None;
                 match result {
-                    Ok(path) => {
-                        if index < self.pending.len() {
-                            self.pending[index] = Pending::File(path.clone());
+                    // Applied only while that attachment is still staged. A
+                    // result that arrives after its attachment was removed, or
+                    // after another account took over the composer, is dropped
+                    // rather than landing on whatever sits in its place now.
+                    Ok(path) => match self.staged_at(target) {
+                        Some(at) => {
+                            self.pending[at].item = Pending::File(path);
+                            if let Some(origin) = self.picture_applying.remove(&target) {
+                                self.picture_origins.insert(target, origin);
+                            }
                         }
-                        if let Some(origin) = self.picture_applying.take() {
-                            self.picture_origins.insert(path, origin);
+                        None => {
+                            self.picture_applying.remove(&target);
                         }
-                    }
+                    },
                     Err(error) => {
-                        self.picture_applying = None;
+                        self.picture_applying.remove(&target);
                         self.toast_error(error);
                     }
                 }
@@ -3457,7 +3514,9 @@ impl App {
             }
             Unsent::Files { paths, caption } => {
                 if open {
-                    self.pending.extend(paths.into_iter().map(Pending::File));
+                    for path in paths {
+                        self.stage(Pending::File(path));
+                    }
                 }
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
@@ -3468,7 +3527,7 @@ impl App {
                 caption,
             } => {
                 if open {
-                    self.pending.push(Pending::Picture {
+                    self.stage(Pending::Picture {
                         width: width as usize,
                         height: height as usize,
                         rgba: std::sync::Arc::new(rgba),
@@ -3973,7 +4032,7 @@ impl App {
             return;
         }
         for path in paths {
-            self.pending.push(Pending::File(path));
+            self.stage(Pending::File(path));
         }
         self.focus_composer = true;
     }
@@ -3990,8 +4049,8 @@ impl App {
         self.emoji_start = None;
         self.mention_start = None;
         let mut files = Vec::new();
-        for item in std::mem::take(&mut self.pending) {
-            match item {
+        for staged in std::mem::take(&mut self.pending) {
+            match staged.item {
                 Pending::Picture {
                     width,
                     height,
@@ -4020,6 +4079,8 @@ impl App {
                 quoting: quoting.take(),
             });
         }
+        // Everything staged has gone, so nothing is remembered about it.
+        self.forget_unstaged_pictures();
         self.follow_outgoing();
     }
 
@@ -4905,58 +4966,72 @@ impl App {
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
                     self.pending.remove(index);
+                    self.forget_unstaged_pictures();
                 }
             }
-            Action::EditPicture(index) => match self.pending.get(index) {
-                Some(Pending::Picture {
-                    width,
-                    height,
-                    rgba,
-                    ..
-                }) => {
+            Action::EditPicture(target) => {
+                // Read out before anything is written back, so the borrow of
+                // the strip ends here.
+                let pasted = match self.staged_at(target) {
+                    Some(at) => match &self.pending[at].item {
+                        Pending::Picture {
+                            width,
+                            height,
+                            rgba,
+                            ..
+                        } => Some((*width as u32, *height as u32, rgba.clone())),
+                        Pending::File(_) => None,
+                    },
+                    None => None,
+                };
+                let file = match self.staged_at(target) {
+                    Some(at) => match &self.pending[at].item {
+                        Pending::File(path) => Some(path.clone()),
+                        Pending::Picture { .. } => None,
+                    },
+                    None => None,
+                };
+                if let Some((width, height, rgba)) = pasted {
                     self.picture_edit = Some(crate::model::PictureEdit::new(
-                        index,
-                        crate::model::PictureSource::Pasted(rgba.clone()),
-                        *width as u32,
-                        *height as u32,
+                        target,
+                        crate::model::PictureSource::Pasted(rgba),
+                        width,
+                        height,
                     ));
-                }
-                Some(Pending::File(path)) => {
+                } else if let Some(path) = file {
                     // A picture that was cropped before opens on the original
                     // with the crop it had, so cropping it again does not
                     // stack another lossy pass on the one before it.
-                    let origin = self.picture_origins.get(path).cloned();
-                    if let Some(origin) = origin {
+                    if let Some(origin) = self.picture_origins.get(&target).cloned() {
                         self.picture_edit = Some(crate::model::PictureEdit {
-                            index,
+                            target,
                             source: origin.source,
                             width: origin.width,
                             height: origin.height,
                             crop: origin.crop,
                             turns: origin.turns,
                         });
-                    } else if Pending::is_picture_file(path) {
-                        self.backend.send(Command::InspectPicture {
-                            index,
-                            path: path.clone(),
-                        });
+                    } else if Pending::is_picture_file(&path) {
+                        self.backend.send(Command::InspectPicture { target, path });
                     }
                 }
-                None => {}
-            },
+            }
             Action::ApplyPictureEdit => {
                 if let Some(edit) = self.picture_edit.take() {
-                    // Held until the file lands, so it can be filed under the
-                    // path the cropped picture is written to.
-                    self.picture_applying = Some(crate::model::PictureOrigin {
-                        source: edit.source.clone(),
-                        width: edit.width,
-                        height: edit.height,
-                        crop: edit.crop,
-                        turns: edit.turns,
-                    });
+                    // Held against the attachment until the file lands, so a
+                    // second edit started meanwhile cannot take its origin.
+                    self.picture_applying.insert(
+                        edit.target,
+                        crate::model::PictureOrigin {
+                            source: edit.source.clone(),
+                            width: edit.width,
+                            height: edit.height,
+                            crop: edit.crop,
+                            turns: edit.turns,
+                        },
+                    );
                     self.backend.send(Command::ApplyPictureEdit {
-                        index: edit.index,
+                        target: edit.target,
                         source: edit.source,
                         width: edit.width,
                         height: edit.height,
@@ -4966,7 +5041,10 @@ impl App {
                 }
             }
             Action::CancelPictureEdit => self.picture_edit = None,
-            Action::ClearPending => self.pending.clear(),
+            Action::ClearPending => {
+                self.pending.clear();
+                self.forget_unstaged_pictures();
+            }
             Action::PlayVoice { message, path } => self.play_voice(message, path),
             Action::PlayVideo { message, path } => self.play_video(message, path),
             Action::PlayVideoWhenDownloaded(message) => {
@@ -5320,7 +5398,7 @@ impl App {
             } => {
                 // Stage the files so the user can add a caption.
                 if self.open_chat.is_some() {
-                    self.pending.push(Pending::Picture {
+                    self.stage(Pending::Picture {
                         width,
                         height,
                         rgba: std::sync::Arc::new(rgba),
@@ -8106,7 +8184,10 @@ mod tests {
         assert_eq!(image_reads, 0, "the icon picture is never read");
         assert!(matches!(
             app.pending.as_slice(),
-            [Pending::File(first), Pending::File(second)] if *first == pdf && *second == zip
+            [
+                Staged { item: Pending::File(first), .. },
+                Staged { item: Pending::File(second), .. }
+            ] if *first == pdf && *second == zip
         ));
         assert_eq!(app.composer, "caption", "the file name is not pasted");
     }
@@ -8134,7 +8215,13 @@ mod tests {
             true,
         );
         assert_eq!(image_reads, 1);
-        assert!(matches!(app.pending.as_slice(), [Pending::Picture { .. }]));
+        assert!(matches!(
+            app.pending.as_slice(),
+            [Staged {
+                item: Pending::Picture { .. },
+                ..
+            }]
+        ));
     }
 
     #[test]
@@ -10700,13 +10787,13 @@ mod tests {
         let chat = "fixture@s.whatsapp.net";
         app.open_chat = Some(chat.into());
         app.reply_to = Some("original".into());
-        app.pending.push(Pending::Picture {
+        app.stage(Pending::Picture {
             width: 1,
             height: 1,
             rgba: std::sync::Arc::new(vec![1, 2, 3, 4]),
             texture: None,
         });
-        app.pending.push(Pending::File("/fixture/a.pdf".into()));
+        app.stage(Pending::File("/fixture/a.pdf".into()));
         app.apply(
             Action::SendPending {
                 chat: chat.into(),
@@ -10767,13 +10854,70 @@ mod tests {
         app.handle_events();
         assert!(matches!(
             app.pending.as_slice(),
-            [Pending::Picture { width: 1, height: 1, .. }, Pending::File(path)]
-                if path == std::path::Path::new("/fixture/a.pdf")
+            [
+                Staged { item: Pending::Picture { width: 1, height: 1, .. }, .. },
+                Staged { item: Pending::File(path), .. }
+            ] if path == std::path::Path::new("/fixture/a.pdf")
         ));
         assert_eq!(app.composer, "Caption fixture");
         assert_eq!(app.reply_to.as_deref(), Some("original"));
         // Repeats of one error share a toast.
         assert_eq!(error_toasts(&app).len(), 1);
+    }
+
+    #[test]
+    fn a_crop_that_lands_after_its_attachment_was_removed_is_dropped() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let source = std::path::PathBuf::from("/fixture/photo.png");
+        let target = app.stage(Pending::File(source.clone()));
+        app.picture_applying.insert(
+            target,
+            crate::model::PictureOrigin {
+                source: crate::model::PictureSource::File(source),
+                width: 4,
+                height: 4,
+                crop: crate::model::PictureCrop::full(4, 4),
+                turns: 0,
+            },
+        );
+        // Unstaged while its crop is still being written.
+        app.pending.clear();
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target,
+                result: Ok(std::path::PathBuf::from("/fixture/edited.jpg")),
+            },
+            true,
+        );
+        assert!(app.pending.is_empty(), "nothing was staged back");
+        assert!(
+            !app.picture_origins.contains_key(&target),
+            "and nothing was remembered about it"
+        );
+    }
+
+    #[test]
+    fn a_crop_cannot_land_on_the_attachment_that_took_its_place() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let going = app.stage(Pending::File("/fixture/one.png".into()));
+        let staying = std::path::PathBuf::from("/fixture/two.png");
+        app.stage(Pending::File(staying.clone()));
+        // The first goes, so the second moves up into its place.
+        app.pending.remove(0);
+        app.apply_backend_event(
+            Event::PictureEdited {
+                target: going,
+                result: Ok(std::path::PathBuf::from("/fixture/edited.jpg")),
+            },
+            true,
+        );
+        let staged = app.pending.first().expect("the other one is still staged");
+        assert!(
+            matches!(&staged.item, Pending::File(path) if *path == staying),
+            "the late result did not replace the picture that moved into its place"
+        );
     }
 
     #[test]

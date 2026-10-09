@@ -670,8 +670,7 @@ mod tests {
         app.show_update = true;
         app.page = Page::Settings;
         app.reply_to = Some("reply-fixture".into());
-        app.pending
-            .push(crate::app::Pending::File("unsent.png".into()));
+        app.stage(crate::app::Pending::File("unsent.png".into()));
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {

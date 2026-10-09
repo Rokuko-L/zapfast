@@ -5206,20 +5206,20 @@ impl Worker {
                     self.emit(Event::Error(format!("Could not make the sticker: {error}")))
                 }
             },
-            Command::InspectPicture { index, path } => {
+            Command::InspectPicture { target, path } => {
                 let commands = self.commands.clone();
                 tokio::task::spawn_blocking(move || {
                     let result = std::fs::read(&path)
                         .map_err(|error| error.to_string())
                         .and_then(|bytes| super::picture_edit::inspect(&bytes));
-                    let _ = commands.send(Command::PictureInspected { index, result });
+                    let _ = commands.send(Command::PictureInspected { target, result });
                 });
             }
-            Command::PictureInspected { index, result } => {
-                self.emit(Event::PictureInspected { index, result });
+            Command::PictureInspected { target, result } => {
+                self.emit(Event::PictureInspected { target, result });
             }
             Command::ApplyPictureEdit {
-                index,
+                target,
                 source,
                 width,
                 height,
@@ -5231,11 +5231,11 @@ impl Worker {
                 tokio::task::spawn_blocking(move || {
                     let result =
                         super::picture_edit::write(&source, width, height, crop, turns, &dir);
-                    let _ = commands.send(Command::PictureEdited { index, result });
+                    let _ = commands.send(Command::PictureEdited { target, result });
                 });
             }
-            Command::PictureEdited { index, result } => {
-                self.emit(Event::PictureEdited { index, result });
+            Command::PictureEdited { target, result } => {
+                self.emit(Event::PictureEdited { target, result });
             }
             Command::PickStickerArchive => {
                 let commands = self.commands.clone();

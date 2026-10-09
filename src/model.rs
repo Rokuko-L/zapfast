@@ -1260,8 +1260,9 @@ pub enum PictureSource {
 /// A staged picture on its way to being cropped and sent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PictureEdit {
-    /// Which staged attachment it replaces.
-    pub index: usize,
+    /// The staged attachment it replaces, named rather than numbered, so that
+    /// removing another attachment cannot point it at a different picture.
+    pub target: crate::app::AttachmentId,
     pub source: PictureSource,
     /// The source picture's own size, before any turn.
     pub width: u32,
@@ -1273,9 +1274,14 @@ pub struct PictureEdit {
 
 impl PictureEdit {
     /// A whole, unturned picture from a staged attachment.
-    pub fn new(index: usize, source: PictureSource, width: u32, height: u32) -> Self {
+    pub fn new(
+        target: crate::app::AttachmentId,
+        source: PictureSource,
+        width: u32,
+        height: u32,
+    ) -> Self {
         Self {
-            index,
+            target,
             source,
             width: width.max(1),
             height: height.max(1),
@@ -2070,7 +2076,7 @@ pub enum Action {
     /// Removes one pending attachment.
     RemovePending(usize),
     /// Opens the cropper on a staged picture.
-    EditPicture(usize),
+    EditPicture(crate::app::AttachmentId),
     /// Keeps the crop and the turn, replacing the staged picture.
     ApplyPictureEdit,
     /// Closes the cropper, leaving the staged picture as it was.

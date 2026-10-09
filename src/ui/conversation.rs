@@ -8017,7 +8017,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
         for (index, item) in app.pending.iter_mut().enumerate() {
             // A picture can be cropped before it goes out. Anything else
             // cannot, and does not pretend to be clickable.
-            let editable = match item {
+            let editable = match &item.item {
                 crate::app::Pending::Picture { .. } => true,
                 crate::app::Pending::File(path) => crate::app::Pending::is_picture_file(path),
             };
@@ -8038,7 +8038,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.raised_edge(palette.surface),
                 );
                 ui.painter().rect_filled(rect, radius, palette.surface);
-                match item {
+                match &mut item.item {
                     crate::app::Pending::Picture {
                         width,
                         height,
@@ -8143,7 +8143,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                 let close =
                     Rect::from_center_size(rect.right_top() + vec2(-10.0, 10.0), Vec2::splat(18.0));
                 let close_response =
-                    ui.interact(close, ui.id().with(("unstage", index)), Sense::click());
+                    ui.interact(close, ui.id().with(("unstage", item.id)), Sense::click());
                 ui.painter()
                     .circle_filled(close.center(), 9.0, palette.overlay);
                 theme::paint_icon(ui, Icon::X, close, 12.0, palette.text);
@@ -8153,7 +8153,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                 {
                     remove = Some(index);
                 } else if response.clicked() {
-                    open = Some(index);
+                    open = Some(item.id);
                 }
             }
         }
@@ -8161,8 +8161,8 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     if let Some(index) = remove {
         app.actions.push(Action::RemovePending(index));
     }
-    if let Some(index) = open {
-        app.actions.push(Action::EditPicture(index));
+    if let Some(target) = open {
+        app.actions.push(Action::EditPicture(target));
     }
     ui.add_space(4.0);
 }
