@@ -832,11 +832,16 @@ impl App {
     /// so neither map keeps an entry for every picture ever cropped, and a
     /// removed picture's original does not outlive it. Attachments waiting in
     /// a chat's draft are still kept, so what is remembered about them stays
-    /// with them until that draft goes.
+    /// with them until that draft goes. What is remembered is shared by every
+    /// account, while drafts are not, so all of them are looked at rather than
+    /// the one on screen: a picture waiting in another account is still a
+    /// picture, and coming back to it must still know where it came from.
     pub fn forget_unstaged_pictures(&mut self) {
         let mut live: Vec<AttachmentId> = self.pending.iter().map(|staged| staged.id).collect();
-        for draft in self.attachment_drafts.values() {
-            live.extend(draft.pending.iter().map(|staged| staged.id));
+        for account in &self.accounts {
+            for draft in account.attachment_drafts.values() {
+                live.extend(draft.pending.iter().map(|staged| staged.id));
+            }
         }
         self.picture_origins.retain(|id, _| live.contains(id));
         self.picture_applying.retain(|id, _| live.contains(id));
@@ -9099,6 +9104,58 @@ mod tests {
             app.open_chat.as_deref(),
             Some(chat),
             "the forward button reopened it"
+        );
+    }
+
+    /// A cropped picture keeps its original while it waits in another account's draft.
+    #[test]
+    fn an_original_survives_a_picture_waiting_in_another_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let dirs = AppDirs::under(directory.path());
+        let mut app = App::headless(dirs.clone(), Settings::default()).0;
+        let second_id = AccountId::parse("2").unwrap();
+        let (second, _) = Account::detached(
+            &dirs,
+            second_id.clone(),
+            crate::settings::AccountSettings::default(),
+        )
+        .unwrap();
+        app.accounts.push(second);
+        let chat = "fixture@g.us";
+        for account in &mut app.accounts {
+            account
+                .chats
+                .push(Chat::new(chat.into(), "Synthetic group".into()));
+        }
+        app.open_chat(chat.into());
+        let source = std::path::PathBuf::from("/fixture/photo.png");
+        let target = app.stage(Pending::File(source.clone()));
+        app.picture_origins.insert(
+            target,
+            crate::model::PictureOrigin {
+                source: crate::model::PictureSource::File(source),
+                width: 8,
+                height: 6,
+                crop: crate::model::PictureCrop::full(8, 6),
+                turns: 0,
+            },
+        );
+        let first_id = app.account().id.clone();
+        // Away to the other account, where this picture waits in a draft.
+        app.switch_account(&second_id);
+        assert!(
+            app.picture_origins.contains_key(&target),
+            "parked in a draft, so not forgotten yet"
+        );
+        // And back, where it must still know the original it was cropped from.
+        app.switch_account(&first_id);
+        assert!(
+            app.picture_origins.contains_key(&target),
+            "coming back kept the original its picture was cropped from"
+        );
+        assert!(
+            app.pending.iter().any(|staged| staged.id == target),
+            "and the picture itself came back with it"
         );
     }
 
