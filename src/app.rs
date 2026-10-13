@@ -9199,7 +9199,7 @@ mod tests {
             Some("Synthetic document.pdf")
         );
         app.attachment_drafts.get_mut(chat).unwrap().pending = vec![Staged {
-            id: 0,
+            id: 1,
             item: Pending::Picture {
                 width: 1,
                 height: 1,
