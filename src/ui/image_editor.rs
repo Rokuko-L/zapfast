@@ -17,6 +17,8 @@ const HANDLE: f32 = 13.0;
 const GRIP: f32 = 22.0;
 /// The crop's border, in points.
 const BORDER: f32 = 2.0;
+/// The round button that keeps the crop, like the composer's send button.
+const KEEP: f32 = 36.0;
 
 /// A change asked for by the controls under the picture. It is recorded while
 /// the window is drawn and applied afterwards, so the edit is not consumed
@@ -47,8 +49,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .fixed_pos(screen.min)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::hover());
-            ui.painter()
-                .rect_filled(rect, 0.0, Color32::from_black_alpha(238));
+            // The window takes the theme's own colour, so the controls on it
+            // read in a light theme as in a dark one.
+            ui.painter().rect_filled(rect, 0.0, palette.window);
             let room = rect.shrink(MARGIN);
             let top = Rect::from_min_size(room.min, vec2(room.width(), BAR));
             let bottom =
@@ -114,12 +117,13 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         actions.push(Action::CancelPictureEdit);
                     }
                     let keep = crate::i18n::gettext(locale, "Keep this crop");
-                    if theme::icon_button(
+                    if theme::circle_button(
                         ui,
                         Icon::Check,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
+                        KEEP,
+                        palette.accent,
+                        palette.accent_hover,
+                        palette.on_accent,
                         &keep,
                     )
                     .clicked()
@@ -327,9 +331,10 @@ fn cursor(edge: CropEdge) -> egui::CursorIcon {
     }
 }
 
-/// Dims what the crop leaves out, and marks its border and handles.
+/// Fades what the crop leaves out toward the window, and marks the crop's
+/// border and handles in the theme's accent.
 fn shade_outside(ui: &egui::Ui, palette: theme::Palette, picture: Rect, crop: Rect) {
-    let shade = palette.shadow.gamma_multiply(1.6);
+    let shade = palette.window.gamma_multiply(0.7);
     for outside in [
         Rect::from_min_max(picture.min, pos2(picture.max.x, crop.min.y)),
         Rect::from_min_max(pos2(picture.min.x, crop.max.y), picture.max),
@@ -349,14 +354,17 @@ fn shade_outside(ui: &egui::Ui, palette: theme::Palette, picture: Rect, crop: Re
     ui.painter().rect_stroke(
         crop,
         0.0,
-        Stroke::new(BORDER, Color32::WHITE),
+        Stroke::new(BORDER, palette.accent),
         StrokeKind::Inside,
     );
     for (_, at) in handles(crop) {
-        ui.painter().rect_filled(
-            Rect::from_center_size(at, Vec2::splat(HANDLE)),
+        let handle = Rect::from_center_size(at, Vec2::splat(HANDLE));
+        ui.painter().rect_filled(handle, 2.0, palette.accent);
+        ui.painter().rect_stroke(
+            handle,
             2.0,
-            Color32::WHITE,
+            Stroke::new(1.0, palette.on_accent),
+            StrokeKind::Inside,
         );
     }
 }
