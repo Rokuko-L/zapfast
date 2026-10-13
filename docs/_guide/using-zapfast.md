@@ -206,7 +206,8 @@ it started. Press Enter or click the check to keep the crop, or Escape or the
 close button to leave the picture as it was.
 
 Keeping a crop does not change the file you picked. ZapFast writes the cropped
-picture beside its other media and sends that one. Opening the cropper again
+picture beside its other media and sends that one, keeping any see-through
+parts of it. Opening the cropper again
 starts from your original with the crop you chose, so you can widen it back out
 without a second pass over the picture.
 

@@ -5,9 +5,16 @@ use std::path::{Path, PathBuf};
 
 use crate::model::{PictureCrop, PictureSource};
 
-/// Quality of the picture written back. The send path passes a JPEG through
-/// untouched, so this is the only lossy step for one.
+/// Quality of an opaque picture written back. The send path passes a JPEG
+/// through untouched, so this is the only lossy step for one.
 const QUALITY: u8 = 92;
+
+/// A cropped picture, encoded, with the extension its format goes by.
+#[derive(Debug)]
+pub struct Edited {
+    pub bytes: Vec<u8>,
+    pub extension: &'static str,
+}
 
 /// A picture's size, read without keeping its pixels.
 pub fn inspect(bytes: &[u8]) -> Result<(u32, u32), String> {
@@ -18,7 +25,7 @@ pub fn inspect(bytes: &[u8]) -> Result<(u32, u32), String> {
 
 /// The picture turned by whole quarter turns clockwise, then cropped. The
 /// crop is measured in the turned picture, which is what the editor showed.
-pub fn edit(bytes: &[u8], crop: PictureCrop, turns: u8) -> Result<Vec<u8>, String> {
+pub fn edit(bytes: &[u8], crop: PictureCrop, turns: u8) -> Result<Edited, String> {
     let picture = image::load_from_memory(bytes)
         .map_err(|error| format!("This picture could not be read: {error}"))?
         .to_rgba8();
@@ -32,7 +39,7 @@ pub fn edit_pasted(
     height: u32,
     crop: PictureCrop,
     turns: u8,
-) -> Result<Vec<u8>, String> {
+) -> Result<Edited, String> {
     let picture = image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())
         .ok_or_else(|| "This picture could not be read".to_owned())?;
     turned_and_cropped(picture, crop, turns)
@@ -56,9 +63,9 @@ pub fn write(
         PictureSource::Pasted(rgba) => edit_pasted(rgba, width, height, crop, turns),
     }?;
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-    let name = super::sticker_store::content_hash(&picture);
-    let path = dir.join(format!("{name}.jpg"));
-    std::fs::write(&path, picture).map_err(|error| error.to_string())?;
+    let name = super::sticker_store::content_hash(&picture.bytes);
+    let path = dir.join(format!("{name}.{}", picture.extension));
+    std::fs::write(&path, picture.bytes).map_err(|error| error.to_string())?;
     Ok(path)
 }
 
@@ -67,7 +74,7 @@ fn turned_and_cropped(
     picture: image::RgbaImage,
     crop: PictureCrop,
     turns: u8,
-) -> Result<Vec<u8>, String> {
+) -> Result<Edited, String> {
     let picture = match turns % 4 {
         1 => image::imageops::rotate90(&picture),
         2 => image::imageops::rotate180(&picture),
@@ -81,25 +88,39 @@ fn turned_and_cropped(
     encode(&kept)
 }
 
-/// Writes the picture as a JPEG. JPEG has no alpha, so a picture that had
-/// see-through pixels is flattened onto white, as making a sticker from one
-/// does.
-fn encode(picture: &image::RgbaImage) -> Result<Vec<u8>, String> {
+/// Writes the picture as a PNG when any of it is see-through, so the crop
+/// keeps its transparency, and as a JPEG otherwise.
+fn encode(picture: &image::RgbaImage) -> Result<Edited, String> {
     use image::ImageEncoder;
     let (width, height) = picture.dimensions();
-    let mut flat = image::RgbImage::new(width, height);
-    for (flat, source) in flat.pixels_mut().zip(picture.pixels()) {
-        let alpha = f32::from(source[3]) / 255.0;
-        for channel in 0..3 {
-            let value = f32::from(source[channel]) * alpha + 255.0 * (1.0 - alpha);
-            flat[channel] = value.round() as u8;
-        }
-    }
     let mut bytes = Vec::new();
+    if picture.pixels().any(|pixel| pixel[3] < u8::MAX) {
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(
+                picture.as_raw(),
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|error| format!("Could not write the picture: {error}"))?;
+        return Ok(Edited {
+            bytes,
+            extension: "png",
+        });
+    }
+    let opaque = image::DynamicImage::ImageRgba8(picture.clone()).to_rgb8();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, QUALITY)
-        .write_image(flat.as_raw(), width, height, image::ExtendedColorType::Rgb8)
+        .write_image(
+            opaque.as_raw(),
+            width,
+            height,
+            image::ExtendedColorType::Rgb8,
+        )
         .map_err(|error| format!("Could not write the picture: {error}"))?;
-    Ok(bytes)
+    Ok(Edited {
+        bytes,
+        extension: "jpg",
+    })
 }
 
 #[cfg(test)]
@@ -124,8 +145,10 @@ mod tests {
         bytes
     }
 
-    fn decoded(bytes: &[u8]) -> image::RgbaImage {
-        image::load_from_memory(bytes).expect("decodes").to_rgba8()
+    fn decoded(edited: &Edited) -> image::RgbaImage {
+        image::load_from_memory(&edited.bytes)
+            .expect("decodes")
+            .to_rgba8()
     }
 
     #[test]
@@ -194,20 +217,31 @@ mod tests {
     }
 
     #[test]
-    fn see_through_pixels_are_flattened_onto_white() {
+    fn see_through_pixels_stay_see_through() {
         use image::ImageEncoder;
         let mut source = Vec::new();
         image::codecs::png::PngEncoder::new(&mut source)
             .write_image(
-                image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 0, 0, 0])).as_raw(),
+                image::RgbaImage::from_fn(8, 8, |x, _| {
+                    image::Rgba([10, 20, 30, if x < 4 { 0 } else { 128 }])
+                })
+                .as_raw(),
                 8,
                 8,
                 image::ExtendedColorType::Rgba8,
             )
             .expect("encodes");
-        let picture = decoded(&edit(&source, PictureCrop::full(8, 8), 0).expect("edits"));
-        let corner = picture.get_pixel(2, 2);
-        assert!(corner[0] > 240 && corner[1] > 240 && corner[2] > 240);
+        let edited = edit(&source, PictureCrop::full(8, 8), 0).expect("edits");
+        assert_eq!(edited.extension, "png");
+        let picture = decoded(&edited);
+        assert_eq!(picture.get_pixel(2, 2)[3], 0);
+        assert_eq!(*picture.get_pixel(6, 2), image::Rgba([10, 20, 30, 128]));
+    }
+
+    #[test]
+    fn an_opaque_picture_is_written_as_a_jpeg() {
+        let edited = edit(&png(8, 8), PictureCrop::full(8, 8), 0).expect("edits");
+        assert_eq!(edited.extension, "jpg");
     }
 
     #[test]
@@ -233,9 +267,8 @@ mod tests {
 
     #[test]
     fn writing_a_crop_puts_it_under_its_own_bytes() {
-        let dir = std::env::temp_dir().join("zapfast-picture-edit-write");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("makes the directory");
+        let root = tempfile::tempdir().expect("makes the directory");
+        let dir = root.path().to_path_buf();
         let source = dir.join("source.png");
         std::fs::write(&source, png(800, 600)).expect("writes the source");
         let crop = PictureCrop {
@@ -257,10 +290,7 @@ mod tests {
             written.extension().and_then(|kind| kind.to_str()),
             Some("jpg")
         );
-        assert_eq!(
-            decoded(&std::fs::read(&written).expect("reads")).dimensions(),
-            (200, 120)
-        );
+        assert_eq!(read(&written).dimensions(), (200, 120));
         // The same crop of the same picture lands on the same name, so a
         // second look at it writes nothing new.
         let again =
@@ -270,16 +300,17 @@ mod tests {
         let pasted = std::sync::Arc::new([0u8, 0, 255, 255].repeat(800 * 600));
         let pasted = write(&PictureSource::Pasted(pasted), 800, 600, crop, 0, &dir)
             .expect("writes the pasted crop");
-        assert_eq!(
-            decoded(&std::fs::read(&pasted).expect("reads")).dimensions(),
-            (200, 120)
-        );
-        std::fs::remove_dir_all(&dir).expect("cleans up");
+        assert_eq!(read(&pasted).dimensions(), (200, 120));
+    }
+
+    fn read(path: &Path) -> image::RgbaImage {
+        image::open(path).expect("decodes").to_rgba8()
     }
 
     #[test]
     fn writing_a_crop_of_a_missing_picture_says_so() {
-        let dir = std::env::temp_dir().join("zapfast-picture-edit-missing");
+        let root = tempfile::tempdir().expect("makes the directory");
+        let dir = root.path().to_path_buf();
         let error = write(
             &PictureSource::File(dir.join("gone.png")),
             4,
